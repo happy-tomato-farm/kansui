@@ -1,0 +1,16 @@
+# 画面の色づかい。ほかの栽培アプリ（kogosei・shuryo など）と揃えてある。
+# 紙のような地色に、葉の緑を差し色にする配色。
+[theme]
+primaryColor = "#3E6B47"            # 葉の緑。ボタンやスライダーの色
+backgroundColor = "#F1F4EC"         # 紙の地色
+secondaryBackgroundColor = "#FFFFFF"  # カード・サイドバーの地色
+textColor = "#16261B"               # 文字
+font = "sans serif"
+
+[server]
+# アップロード機能を使わないので小さくしておく（既定は200MB）
+maxUploadSize = 5
+
+[browser]
+# 利用状況の送信を止める
+gatherUsageStats = false

@@ -1,0 +1,12 @@
+# Streamlit Community Cloud はこのファイルを見て、必要なものを入れる。
+#
+# ★app.py の実行に要るのはこの2つだけ。
+#   pandas と openpyxl は実測データの読み込み（core/loader.py・core/daily.py・
+#   tools/）でしか使わない。アプリ本体は通らないので入れていない。
+#   少ないほうが起動が速く、入れ損ないで止まる危険も減る。
+#
+# 手元で検証スクリプトを動かすときは、別途
+#   py -m pip install pandas openpyxl
+# を入れること。
+streamlit==1.61.1
+numpy==2.4.6
