@@ -218,6 +218,20 @@ with st.expander("☀ 日射の細かい設定", expanded=False):
         f"打ち消し合う。実測に合っていなくてよい。"
     )
 
+    st.divider()
+    st.markdown("**日射をどちらの基準で入れるか**")
+    radiation_basis = st.radio(
+        "日射をどちらの基準で入れるか",
+        ["ハウスの中（センサー値）", "気象予報の全天日射量"],
+        label_visibility="collapsed",
+        help=(
+            "ハウスのセンサーは屋根の下にあるので、外より小さい値が出る。"
+            "気象庁やウェザーニュースの予報を使うときは下を選ぶ。"
+            "選ぶと、下の入力欄の単位が切り替わる。"
+        ),
+    )
+    inside_basis = radiation_basis.startswith("ハウスの中")
+
 with st.expander("🪴 土と群落の設定", expanded=False):
     st.caption("土と群落の前提。実測できていない値が多いので、感度を見るのに使う。")
     cols = st.columns(2)
@@ -277,18 +291,10 @@ default_inside = preset_values.get(preset, clear_mj)
 st.divider()
 
 # --- 日射の入力 ---
-bottom = st.columns([1.1, 1, 1.2])
+# 基準の選び分けは「日射の細かい設定」の中に移してある。
+# ふだんはハウス内センサー基準のままなので、画面に出しておく必要がない。
+bottom = st.columns([1.4, 1])
 with bottom[0]:
-    radiation_basis = st.radio(
-        "日射をどちらの基準で入れるか",
-        ["ハウスの中（センサー値）", "気象予報の全天日射量"],
-        help=(
-            "ハウスのセンサーは屋根の下にあるので、外より小さい値が出る。"
-            "気象庁やウェザーニュースの予報を使うときは下を選ぶ。"
-        ),
-    )
-    inside_basis = radiation_basis.startswith("ハウスの中")
-with bottom[1]:
     if inside_basis:
         entered = st.number_input(
             "ハウス内の日射 [MJ/m²]",
@@ -307,60 +313,70 @@ with bottom[1]:
             help="気象庁やウェザーニュースなどの全天日射量の予報値。",
         )
         radiation = entered * outside_to_sensor
-with bottom[2]:
+with bottom[1]:
     st.caption(
         f"この日の目安（ハウス内）\n\n"
         f"快晴 **{clear_mj:.1f}** ／ 平年 **{normal_mj:.1f}** ／ "
         f"曇天 **{cloudy_mj:.1f}** MJ/m²"
     )
 
-# --- 葉と潅水 ---
-top = st.columns(3)
-with top[0]:
-    st.markdown("**② 葉の枚数 [枚/m²]**")
-    leaves_per_m2 = st.number_input(
-        "葉の枚数", min_value=8.0, max_value=48.0,
-        value=float(round(planned_leaves, 1)), step=0.5, format="%.1f",
-        label_visibility="collapsed",
-        key=f"leaves_{target_date}",
-        help=(
-            "8〜48 の範囲。作業計画シート「葉枚数管理／必要枚数/㎡」の"
-            "週ごとの目標値。初期値は日付から引いている。"
-        ),
-    )
+# --- 葉と潅水（ふだんは日付から引いた値のままでよいので、たたんでおく）---
+with st.expander(
+    f"🌿 葉と潅水の設定"
+    f"（いまは {planned_leaves:.1f} 枚/m² ／ "
+    f"LAI {planned_leaves * LEAF_AREA_PER_LEAF_M2:.2f} ／ 上乗せ 0%）",
+    expanded=False,
+):
     st.caption(
-        f"作業計画（週{target_date.isocalendar()[1]}）の目標は "
-        f"**{planned_leaves:.1f} 枚/m²**。冬16枚→春40枚と倍以上動く。"
+        "葉の枚数は作業計画シートの週ごとの目標を日付から引いている。"
+        "実際の枚数が違うときや、塩を流すために水を増やすときだけ開く。"
     )
-with top[1]:
-    st.markdown("**③ 葉1枚の面積 [m²]**")
-    leaf_area = st.number_input(
-        "葉1枚の面積", min_value=0.06, max_value=0.22,
-        value=float(LEAF_AREA_PER_LEAF_M2), step=0.01, format="%.2f",
-        label_visibility="collapsed",
-        help="0.06〜0.22 の範囲。★実測してほしい値。結果にいちばん効く。",
-    )
-    lai = leaves_per_m2 * leaf_area
-    st.caption(f"**LAI = {lai:.2f}**（葉の枚数 × 葉1枚の面積）")
-    if lai > 5.0:
-        st.caption("⚠ LAI 5 超。葉1枚の面積が過大でないか確かめること。")
-with top[2]:
-    st.markdown("**④ 塩を流すための上乗せ [%]**")
-    leaching_percent = st.number_input(
-        "上乗せ", min_value=0, max_value=150, value=0, step=5,
-        label_visibility="collapsed",
-        help=(
-            "0〜150 の範囲。蒸散量に対して何％多く入れるか。既定は 0%。"
-            "排液の EC が上がってきたら増やす。"
-        ),
-    )
-    if leaching_percent == 0:
-        st.caption(
-            "0% ＝ 蒸散量とちょうど同じ量。"
-            "実際の潅水記録はこれより3〜4割多い（塩を流すぶん）。"
+    top = st.columns(3)
+    with top[0]:
+        st.markdown("**② 葉の枚数 [枚/m²]**")
+        leaves_per_m2 = st.number_input(
+            "葉の枚数", min_value=8.0, max_value=48.0,
+            value=float(round(planned_leaves, 1)), step=0.5, format="%.1f",
+            label_visibility="collapsed",
+            key=f"leaves_{target_date}",
+            help=(
+                "8〜48 の範囲。作業計画シート「葉枚数管理／必要枚数/㎡」の"
+                "週ごとの目標値。初期値は日付から引いている。"
+            ),
         )
-    else:
-        st.caption(f"蒸散量の {1 + leaching_percent / 100:.2f} 倍を入れる。")
+        st.caption(
+            f"作業計画（週{target_date.isocalendar()[1]}）の目標は "
+            f"**{planned_leaves:.1f} 枚/m²**。冬16枚→春40枚と倍以上動く。"
+        )
+    with top[1]:
+        st.markdown("**③ 葉1枚の面積 [m²]**")
+        leaf_area = st.number_input(
+            "葉1枚の面積", min_value=0.06, max_value=0.22,
+            value=float(LEAF_AREA_PER_LEAF_M2), step=0.01, format="%.2f",
+            label_visibility="collapsed",
+            help="0.06〜0.22 の範囲。★実測してほしい値。結果にいちばん効く。",
+        )
+        lai = leaves_per_m2 * leaf_area
+        st.caption(f"**LAI = {lai:.2f}**（葉の枚数 × 葉1枚の面積）")
+        if lai > 5.0:
+            st.caption("⚠ LAI 5 超。葉1枚の面積が過大でないか確かめること。")
+    with top[2]:
+        st.markdown("**④ 塩を流すための上乗せ [%]**")
+        leaching_percent = st.number_input(
+            "上乗せ", min_value=0, max_value=150, value=0, step=5,
+            label_visibility="collapsed",
+            help=(
+                "0〜150 の範囲。蒸散量に対して何％多く入れるか。既定は 0%。"
+                "排液の EC が上がってきたら増やす。"
+            ),
+        )
+        if leaching_percent == 0:
+            st.caption(
+                "0% ＝ 蒸散量とちょうど同じ量。"
+                "実際の潅水記録はこれより3〜4割多い（塩を流すぶん）。"
+            )
+        else:
+            st.caption(f"蒸散量の {1 + leaching_percent / 100:.2f} 倍を入れる。")
 
 # 気温・湿度は日射が決まってから推定するので、ここで計算
 auto = forecast_from_date(radiation, target_date)
@@ -495,10 +511,6 @@ with st.expander("📋 この日の前提条件", expanded=False):
         "この日の前提条件",
         f"""
         <table style="width:100%; border-collapse:collapse;">
-          <tr><td>気象予報の全天日射量</td>
-              <td style="text-align:right"><b>{forecast_outside_mj:.1f}</b> MJ/m²</td></tr>
-          <tr><td>ハウスの中（蒸散の計算に使う）</td>
-              <td style="text-align:right"><b>{advice.sensor_radiation_mj:.1f}</b> MJ/m²</td></tr>
           <tr><td>実質日射（10MJあたりの分母）</td>
               <td style="text-align:right"><b>{advice.effective_radiation_mj:.1f}</b> MJ/m²</td></tr>
           <tr><td>日中の平均気温</td>
@@ -526,6 +538,24 @@ with st.expander("📋 この日の前提条件", expanded=False):
 # =============================================================================
 
 st.subheader("その日の見通し")
+
+# 日射の2つは「この日の前提条件」から移してきた。
+# どの明るさを前提にした数字なのかが、開かなくても分かるようにするため。
+radiation_columns = st.columns(2)
+radiation_columns[0].metric(
+    "気象予報の全天日射量", f"{forecast_outside_mj:.1f} MJ/m²",
+    help=(
+        "ハウスの外の日射。気象庁やウェザーニュースの予報値と"
+        "直接くらべられる。ハウス内の値 ÷ その日の透過率。"
+    ),
+)
+radiation_columns[1].metric(
+    "ハウスの中の日射", f"{advice.sensor_radiation_mj:.1f} MJ/m²",
+    help=(
+        "作物が実際に浴びる光。蒸散の計算に使っているのはこの値。"
+        "液肥混入機レシピの「日射予測」の欄にもこの値を入れる。"
+    ),
+)
 
 columns = st.columns(4)
 columns[0].metric("予測蒸散量", f"{advice.transpiration_l_per_m2:.2f} L/m²")
