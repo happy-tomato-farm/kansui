@@ -131,32 +131,44 @@ month = target_date.month
 day_of_year = target_date.timetuple().tm_yday
 planned_leaves = leaf_count_per_m2(target_date)
 
-# --- 詳しい設定はタブの中。先に読まないと日射が決まらないので、ここで開く ---
-tab_water, tab_solar, tab_soil = st.tabs(
-    ["🌿 葉と潅水", "☀ 日射の細かい設定", "🪴 土と群落の設定"]
-)
+# --- 詳しい設定はたたんでおく ---
+#
+# 【なぜスライダーをやめたか】（2026-09-25）
+# スマホで画面を上下にスワイプすると、指が触れたスライダーが動いてしまう。
+# 気づかないうちに値が変わって、出てくる水の量がずれる。
+# 数値入力欄なら、タップして数字を打つまで動かない。
+#
+# 【なぜタブをやめて expander にしたか】
+# タブは「常にどれか1つが開いている」ので、触るつもりのない設定が
+# いつも画面に出ている。expander なら閉じておける＝誤って触らない。
+#
+# ★ここで決めた値が下の日射計算に要るので、位置は画面の上のまま。
+#   閉じていれば場所は取らない。
 
-with tab_solar:
+with st.expander("☀ 日射の細かい設定", expanded=False):
     st.caption("ふだんは触らなくてよい。空がふつうでない日だけ τ を動かす。")
 
     st.markdown("**物理の設定（外の日射 → ハウス内センサー値）**")
     cols = st.columns(2)
     with cols[0]:
-        tau = st.slider(
-            "大気透過率 τ", 0.20, 0.95, float(clear_sky_tau(day_of_year)), 0.01,
+        tau = st.number_input(
+            "大気透過率 τ", min_value=0.20, max_value=0.95,
+            value=float(clear_sky_tau(day_of_year)), step=0.01, format="%.2f",
             key=f"tau_{target_date}",
             help=(
-                "空の澄み具合。初期値は日付から決まる快晴値で、"
+                "空の澄み具合。0.20〜0.95 の範囲。"
+                "初期値は日付から決まる快晴値で、"
                 "宇都宮気象台の実測341日から当てはめた。"
                 "黄砂・花粉・煙霧の日は 0.05〜0.15 下げる。"
             ),
         )
     with cols[1]:
-        transmittance_base = st.slider(
-            "ハウス被覆の透過率（年の水準）", 0.50, 0.90,
-            float(COVER_TRANSMITTANCE), 0.005,
+        transmittance_base = st.number_input(
+            "ハウス被覆の透過率（年の水準）", min_value=0.50, max_value=0.90,
+            value=float(COVER_TRANSMITTANCE), step=0.005, format="%.3f",
             help=(
-                "フィルムの齢で決まる水準。実測では 2019年 0.76 → 2026年 0.67。"
+                "0.50〜0.90 の範囲。フィルムの齢で決まる水準。"
+                "実測では 2019年 0.76 → 2026年 0.67。"
                 "★2026年6月に張り替えた後のデータはまだ無いので、"
                 "快晴の日が10日ほどたまったら測り直すこと。"
                 "季節の変化は下に書いたとおり自動で掛かる。"
@@ -178,22 +190,23 @@ with tab_solar:
     st.markdown("**液肥混入機レシピと合わせる係数（物理量ではない）**")
     cols2 = st.columns(2)
     with cols2[0]:
-        recipe_coef = st.slider(
-            "レシピの日射センサー係数", 0.50, 0.90,
-            float(RECIPE_RADIATION_COEF), 0.01,
+        recipe_coef = st.number_input(
+            "レシピの日射センサー係数", min_value=0.50, max_value=0.90,
+            value=float(RECIPE_RADIATION_COEF), step=0.01, format="%.2f",
             help=(
-                "「実質日射」＝ センサー値 ÷ この係数。"
+                "0.50〜0.90 の範囲。「実質日射」＝ センサー値 ÷ この係数。"
                 "作業日誌の「センサー補正係数 6.5」に対応する。"
                 "★実測の透過率に合わせる必要はない。"
                 "レシピ側と同じ値であることだけが大事。"
             ),
         )
     with cols2[1]:
-        film_factor = st.slider(
-            "フィルム劣化係数", 0.70, 1.00,
-            float(HOUSE_SPECS[house]["film_degradation_factor"]), 0.01,
+        film_factor = st.number_input(
+            "フィルム劣化係数", min_value=0.70, max_value=1.00,
+            value=float(HOUSE_SPECS[house]["film_degradation_factor"]),
+            step=0.01, format="%.2f",
             help=(
-                "これもレシピ側の film と同じ値にすること。"
+                "0.70〜1.00 の範囲。これもレシピ側の film と同じ値にすること。"
                 "ずれると、実際に出る水の量がその比率でずれる。"
             ),
         )
@@ -205,32 +218,39 @@ with tab_solar:
         f"打ち消し合う。実測に合っていなくてよい。"
     )
 
-with tab_soil:
+with st.expander("🪴 土と群落の設定", expanded=False):
     st.caption("土と群落の前提。実測できていない値が多いので、感度を見るのに使う。")
     cols = st.columns(2)
     with cols[0]:
-        wind = st.slider(
-            "群落内の風速 [m/s]", 0.1, 3.0, float(WIND_SPEED_M_PER_S), 0.1,
+        wind = st.number_input(
+            "群落内の風速 [m/s]", min_value=0.1, max_value=3.0,
+            value=float(WIND_SPEED_M_PER_S), step=0.1, format="%.1f",
             help=(
-                "ダクト送風を24時間しているので 0.2 を既定にしている。"
+                "0.1〜3.0 の範囲。ダクト送風を24時間しているので 0.2 を既定にしている。"
                 "サイドカーテンを開けると上がるが、0.2→2.0 でも蒸散は1.21倍止まり。"
             ),
         )
-        root_depth = st.slider(
-            "根群域の深さ [m]", 0.20, 0.80, float(ROOT_ZONE_DEPTH_M), 0.05,
-            help="実測できていないが、水の配分にはほとんど効かない。",
+        root_depth = st.number_input(
+            "根群域の深さ [m]", min_value=0.20, max_value=0.80,
+            value=float(ROOT_ZONE_DEPTH_M), step=0.05, format="%.2f",
+            help="0.20〜0.80 の範囲。実測できていないが、水の配分にはほとんど効かない。",
         )
-        start_pf = st.slider(
-            "朝の土壌 pF", 1.2, 3.5, 1.8, 0.1,
-            help="1.8 が圃場容水量。前日の潅水が効いていればこのあたり。",
+        start_pf = st.number_input(
+            "朝の土壌 pF", min_value=1.2, max_value=3.5,
+            value=1.8, step=0.1, format="%.1f",
+            help="1.2〜3.5 の範囲。1.8 が圃場容水量。"
+                 "前日の潅水が効いていればこのあたり。",
         )
     with cols[1]:
-        wetted = st.slider(
-            "点滴で濡れる床面積の割合", 0.3, 1.0, float(DRIP_WETTED_FRACTION), 0.05,
+        wetted = st.number_input(
+            "点滴で濡れる床面積の割合", min_value=0.3, max_value=1.0,
+            value=float(DRIP_WETTED_FRACTION), step=0.05, format="%.2f",
+            help="0.3〜1.0 の範囲。",
         )
-        max_uptake = st.slider(
-            "根系の最大吸水速度 [mm/日]", 3.0, 12.0,
-            float(ROOT_SYSTEM_MAX_UPTAKE_MM_PER_DAY), 0.5,
+        max_uptake = st.number_input(
+            "根系の最大吸水速度 [mm/日]", min_value=3.0, max_value=12.0,
+            value=float(ROOT_SYSTEM_MAX_UPTAKE_MM_PER_DAY), step=0.5, format="%.1f",
+            help="3.0〜12.0 の範囲。",
         )
     st.caption(
         f"気孔コンダクタンス倍率は {STOMATA_SCALE_FACTOR}（文献に合わせた値）で固定。"
@@ -250,130 +270,142 @@ cloudy_mj = sensor_basis_radiation_mj(
 preset_values = {"快晴": clear_mj, "平年なみ": normal_mj, "曇天": cloudy_mj}
 default_inside = preset_values.get(preset, clear_mj)
 
-with tab_water:
-    top = st.columns(3)
-    with top[0]:
-        st.markdown("**② 葉の枚数 [枚/m²]**")
-        leaves_per_m2 = st.slider(
-            "葉の枚数", min_value=8.0, max_value=48.0,
-            value=float(round(planned_leaves, 1)), step=0.5,
-            label_visibility="collapsed",
-            key=f"leaves_{target_date}",
-            help=(
-                "作業計画シート「葉枚数管理／必要枚数/㎡」の週ごとの目標値。"
-                "初期値は日付から引いている。"
-            ),
+# =============================================================================
+# 1-2. 毎朝触るところ（たたまずに出しておく）
+# =============================================================================
+
+st.divider()
+
+# --- 日射の入力 ---
+bottom = st.columns([1.1, 1, 1.2])
+with bottom[0]:
+    radiation_basis = st.radio(
+        "日射をどちらの基準で入れるか",
+        ["ハウスの中（センサー値）", "気象予報の全天日射量"],
+        help=(
+            "ハウスのセンサーは屋根の下にあるので、外より小さい値が出る。"
+            "気象庁やウェザーニュースの予報を使うときは下を選ぶ。"
+        ),
+    )
+    inside_basis = radiation_basis.startswith("ハウスの中")
+with bottom[1]:
+    if inside_basis:
+        entered = st.number_input(
+            "ハウス内の日射 [MJ/m²]",
+            min_value=0.0, max_value=30.0,
+            value=float(round(default_inside, 1)), step=0.5,
+            key=f"rad_in_{target_date}_{preset}",
+            help="液肥混入機レシピのアプリに入れるのと同じ値。",
         )
+        radiation = entered
+    else:
+        entered = st.number_input(
+            "気象予報の全天日射量 [MJ/m²]",
+            min_value=0.0, max_value=45.0,
+            value=float(round(default_inside / outside_to_sensor, 1)), step=0.5,
+            key=f"rad_out_{target_date}_{preset}",
+            help="気象庁やウェザーニュースなどの全天日射量の予報値。",
+        )
+        radiation = entered * outside_to_sensor
+with bottom[2]:
+    st.caption(
+        f"この日の目安（ハウス内）\n\n"
+        f"快晴 **{clear_mj:.1f}** ／ 平年 **{normal_mj:.1f}** ／ "
+        f"曇天 **{cloudy_mj:.1f}** MJ/m²"
+    )
+
+# --- 葉と潅水 ---
+top = st.columns(3)
+with top[0]:
+    st.markdown("**② 葉の枚数 [枚/m²]**")
+    leaves_per_m2 = st.number_input(
+        "葉の枚数", min_value=8.0, max_value=48.0,
+        value=float(round(planned_leaves, 1)), step=0.5, format="%.1f",
+        label_visibility="collapsed",
+        key=f"leaves_{target_date}",
+        help=(
+            "8〜48 の範囲。作業計画シート「葉枚数管理／必要枚数/㎡」の"
+            "週ごとの目標値。初期値は日付から引いている。"
+        ),
+    )
+    st.caption(
+        f"作業計画（週{target_date.isocalendar()[1]}）の目標は "
+        f"**{planned_leaves:.1f} 枚/m²**。冬16枚→春40枚と倍以上動く。"
+    )
+with top[1]:
+    st.markdown("**③ 葉1枚の面積 [m²]**")
+    leaf_area = st.number_input(
+        "葉1枚の面積", min_value=0.06, max_value=0.22,
+        value=float(LEAF_AREA_PER_LEAF_M2), step=0.01, format="%.2f",
+        label_visibility="collapsed",
+        help="0.06〜0.22 の範囲。★実測してほしい値。結果にいちばん効く。",
+    )
+    lai = leaves_per_m2 * leaf_area
+    st.caption(f"**LAI = {lai:.2f}**（葉の枚数 × 葉1枚の面積）")
+    if lai > 5.0:
+        st.caption("⚠ LAI 5 超。葉1枚の面積が過大でないか確かめること。")
+with top[2]:
+    st.markdown("**④ 塩を流すための上乗せ [%]**")
+    leaching_percent = st.number_input(
+        "上乗せ", min_value=0, max_value=150, value=0, step=5,
+        label_visibility="collapsed",
+        help=(
+            "0〜150 の範囲。蒸散量に対して何％多く入れるか。既定は 0%。"
+            "排液の EC が上がってきたら増やす。"
+        ),
+    )
+    if leaching_percent == 0:
         st.caption(
-            f"作業計画（週{target_date.isocalendar()[1]}）の目標は "
-            f"**{planned_leaves:.1f} 枚/m²**。冬16枚→春40枚と倍以上動く。"
+            "0% ＝ 蒸散量とちょうど同じ量。"
+            "実際の潅水記録はこれより3〜4割多い（塩を流すぶん）。"
         )
-    with top[1]:
-        st.markdown("**③ 葉1枚の面積 [m²]**")
-        leaf_area = st.slider(
-            "葉1枚の面積", min_value=0.06, max_value=0.22,
-            value=float(LEAF_AREA_PER_LEAF_M2), step=0.01,
-            label_visibility="collapsed",
-            help="★実測してほしい値。結果にいちばん効く。",
-        )
-        lai = leaves_per_m2 * leaf_area
-        st.caption(f"**LAI = {lai:.2f}**（葉の枚数 × 葉1枚の面積）")
-        if lai > 5.0:
-            st.caption("⚠ LAI 5 超。葉1枚の面積が過大でないか確かめること。")
-    with top[2]:
-        st.markdown("**④ 塩を流すための上乗せ [%]**")
-        leaching_percent = st.slider(
-            "上乗せ", min_value=0, max_value=150, value=0, step=5,
-            label_visibility="collapsed",
-            help=(
-                "蒸散量に対して何％多く入れるか。既定は 0%。"
-                "排液の EC が上がってきたら増やす。"
-            ),
-        )
-        if leaching_percent == 0:
-            st.caption(
-                "0% ＝ 蒸散量とちょうど同じ量。"
-                "実際の潅水記録はこれより3〜4割多い（塩を流すぶん）。"
-            )
-        else:
-            st.caption(f"蒸散量の {1 + leaching_percent / 100:.2f} 倍を入れる。")
+    else:
+        st.caption(f"蒸散量の {1 + leaching_percent / 100:.2f} 倍を入れる。")
 
-    st.divider()
+# 気温・湿度は日射が決まってから推定するので、ここで計算
+auto = forecast_from_date(radiation, target_date)
 
-    # --- 日射の入力 ---
-    bottom = st.columns(3)
-    with bottom[0]:
-        radiation_basis = st.radio(
-            "日射をどちらの基準で入れるか",
-            ["ハウスの中（センサー値）", "気象予報の全天日射量"],
-            help=(
-                "ハウスのセンサーは屋根の下にあるので、外より小さい値が出る。"
-                "気象庁やウェザーニュースの予報を使うときは下を選ぶ。"
-            ),
-        )
-        inside_basis = radiation_basis.startswith("ハウスの中")
-    with bottom[1]:
-        if inside_basis:
-            entered = st.number_input(
-                "ハウス内の日射 [MJ/m²]",
-                min_value=0.0, max_value=30.0,
-                value=float(round(default_inside, 1)), step=0.5,
-                key=f"rad_in_{target_date}_{preset}",
-                help="液肥混入機レシピのアプリに入れるのと同じ値。",
-            )
-            radiation = entered
-        else:
-            entered = st.number_input(
-                "気象予報の全天日射量 [MJ/m²]",
-                min_value=0.0, max_value=45.0,
-                value=float(round(default_inside / outside_to_sensor, 1)), step=0.5,
-                key=f"rad_out_{target_date}_{preset}",
-                help="気象庁やウェザーニュースなどの全天日射量の予報値。",
-            )
-            radiation = entered * outside_to_sensor
-    with bottom[2]:
-        st.caption(
-            f"この日の目安（ハウス内）\n\n"
-            f"快晴 **{clear_mj:.1f}** ／ 平年 **{normal_mj:.1f}** ／ "
-            f"曇天 **{cloudy_mj:.1f}** MJ/m²"
-        )
-
-    # 気温・湿度は日射が決まってから推定するので、ここで計算
-    auto = forecast_from_date(radiation, target_date)
-
+# --- 気温・湿度・CO2 は推定値のままでよいので、たたんでおく ---
+with st.expander(
+    f"🌡 気温・湿度・CO₂ を打ち替える"
+    f"（いまは推定値 {auto.mean_temp_c:.1f} ℃ ／ "
+    f"{auto.mean_relative_humidity * 100:.0f} % ／ "
+    f"{auto.mean_co2_ppm:.0f} ppm）",
+    expanded=False,
+):
+    st.caption(
+        "日付と日射から推定した値が入っている。"
+        "ハウスの実測があるときだけ打ち替える。"
+        "日付か「きょうの空」を変えると推定し直される。"
+    )
     weather = st.columns(3)
     with weather[0]:
         st.markdown("**⑤ 日中の平均気温 [℃]**")
         manual_temp = st.number_input(
             "気温", min_value=5.0, max_value=40.0,
-            value=float(round(auto.mean_temp_c, 1)), step=0.5,
+            value=float(round(auto.mean_temp_c, 1)), step=0.5, format="%.1f",
             label_visibility="collapsed",
             key=f"temp_{target_date}_{preset}",
-            help="日付と日射からの推定値が入っている。実測があれば打ち替える。",
+            help="5〜40 の範囲。",
         )
     with weather[1]:
         st.markdown("**⑥ 日中の平均湿度 [%]**")
-        manual_rh = st.slider(
+        manual_rh = st.number_input(
             "湿度", min_value=30, max_value=95,
             value=int(round(auto.mean_relative_humidity * 100)), step=1,
             label_visibility="collapsed",
             key=f"rh_{target_date}_{preset}",
-            help="日付と日射からの推定値が入っている。実測があれば打ち替える。",
+            help="30〜95 の範囲。",
         )
     with weather[2]:
         st.markdown("**日中の平均CO₂ [ppm]**")
         manual_co2 = st.number_input(
             "CO2", min_value=300.0, max_value=1500.0,
-            value=float(round(auto.mean_co2_ppm)), step=10.0,
+            value=float(round(auto.mean_co2_ppm)), step=10.0, format="%.0f",
             label_visibility="collapsed",
             key=f"co2_{target_date}_{preset}",
+            help="300〜1500 の範囲。",
         )
-    st.caption(
-        f"⑤⑥ の初期値は日付と日射からの推定（気温 {auto.mean_temp_c:.1f} ℃ ／ "
-        f"湿度 {auto.mean_relative_humidity * 100:.0f} % ／ "
-        f"CO₂ {auto.mean_co2_ppm:.0f} ppm）。"
-        f"日付か「きょうの空」を変えると入れ直される。"
-    )
 
 # 日射の読みかえ結果
 # 外の日射は物理の透過率で、実質日射はレシピの取り決めで割る。別の仕事なので別の値。
@@ -436,11 +468,31 @@ night_rh = forecast.night_vapor_pressure_kpa / night_saturation_kpa
 
 st.divider()
 
-summary = st.columns(2)
+panel(
+    "液肥混入機レシピに入れる数字",
+    f"""
+    <div style="font-size:2.2rem; font-weight:800; line-height:1.2;">
+      {advice.water_per_10mj_l_per_m2:.2f} <span style="font-size:1.1rem">L/m²</span>
+    </div>
+    <div style="margin:0.3rem 0 0.7rem 0;">「10MJあたり潅水量」の欄に入れる</div>
+    <table style="width:100%; border-collapse:collapse;">
+      <tr><td>日射予測の欄に入れる値</td>
+          <td style="text-align:right"><b>{advice.sensor_radiation_mj:.1f}</b> MJ/m²</td></tr>
+    </table>
+    <div style="margin-top:0.6rem; font-size:0.85rem; opacity:0.85;">
+      日射予測は<b>ハウス内センサー基準</b>のまま入れる。
+      ÷透過率 ×フィルム係数 はレシピ側がやる。
+    </div>
+    """,
+    accent="#1b7a3d",
+    background="#eaf6ee",
+)
 
-with summary[0]:
+# 前提条件はふだん見なくてよいので、たたんでおく。
+# 数字が思ったのと違うときに、ここを開いて元をたどる。
+with st.expander("📋 この日の前提条件", expanded=False):
     panel(
-        "この日の前提",
+        "この日の前提条件",
         f"""
         <table style="width:100%; border-collapse:collapse;">
           <tr><td>気象予報の全天日射量</td>
@@ -466,27 +518,6 @@ with summary[0]:
         """,
         accent="#1f6f8b",
         background="#eaf4f8",
-    )
-
-with summary[1]:
-    panel(
-        "液肥混入機レシピに入れる数字",
-        f"""
-        <div style="font-size:2.2rem; font-weight:800; line-height:1.2;">
-          {advice.water_per_10mj_l_per_m2:.2f} <span style="font-size:1.1rem">L/m²</span>
-        </div>
-        <div style="margin:0.3rem 0 0.7rem 0;">「10MJあたり潅水量」の欄に入れる</div>
-        <table style="width:100%; border-collapse:collapse;">
-          <tr><td>日射予測の欄に入れる値</td>
-              <td style="text-align:right"><b>{advice.sensor_radiation_mj:.1f}</b> MJ/m²</td></tr>
-        </table>
-        <div style="margin-top:0.6rem; font-size:0.85rem; opacity:0.85;">
-          日射予測は<b>ハウス内センサー基準</b>のまま入れる。
-          ÷透過率 ×フィルム係数 はレシピ側がやる。
-        </div>
-        """,
-        accent="#1b7a3d",
-        background="#eaf6ee",
     )
 
 
