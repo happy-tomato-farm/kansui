@@ -220,14 +220,17 @@ with st.expander("☀ 日射の細かい設定", expanded=False):
 
     st.divider()
     st.markdown("**日射をどちらの基準で入れるか**")
+    # 既定は「気象予報の全天日射量」。毎朝見るのは天気予報の数字であって、
+    # ハウス内センサーの値は事前には分からないため。
     radiation_basis = st.radio(
         "日射をどちらの基準で入れるか",
-        ["ハウスの中（センサー値）", "気象予報の全天日射量"],
+        ["気象予報の全天日射量", "ハウスの中（センサー値）"],
         label_visibility="collapsed",
         help=(
             "ハウスのセンサーは屋根の下にあるので、外より小さい値が出る。"
-            "気象庁やウェザーニュースの予報を使うときは下を選ぶ。"
-            "選ぶと、下の入力欄の単位が切り替わる。"
+            "ふだんは気象庁やウェザーニュースの予報値をそのまま入れればよい。"
+            "ハウス内の実測値を入れたいときだけ下を選ぶ。"
+            "選ぶと、入力欄の単位と「この日の目安」の基準が切り替わる。"
         ),
     )
     inside_basis = radiation_basis.startswith("ハウスの中")
@@ -292,7 +295,7 @@ st.divider()
 
 # --- 日射の入力 ---
 # 基準の選び分けは「日射の細かい設定」の中に移してある。
-# ふだんはハウス内センサー基準のままなので、画面に出しておく必要がない。
+# ふだんは気象予報の全天日射量をそのまま入れるので、画面に出す必要がない。
 bottom = st.columns([1.4, 1])
 with bottom[0]:
     if inside_basis:
@@ -314,10 +317,14 @@ with bottom[0]:
         )
         radiation = entered * outside_to_sensor
 with bottom[1]:
+    # 目安は入力欄と同じ基準で出す。基準が違うものを並べると読み違える。
+    # 全天基準にするときは、ハウス内の値をその日の透過率で割り戻す。
+    scale = 1.0 if inside_basis else 1.0 / outside_to_sensor
+    basis_label = "ハウス内" if inside_basis else "全天（ハウスの外）"
     st.caption(
-        f"この日の目安（ハウス内）\n\n"
-        f"快晴 **{clear_mj:.1f}** ／ 平年 **{normal_mj:.1f}** ／ "
-        f"曇天 **{cloudy_mj:.1f}** MJ/m²"
+        f"この日の目安（{basis_label}）\n\n"
+        f"快晴 **{clear_mj * scale:.1f}** ／ 平年 **{normal_mj * scale:.1f}** ／ "
+        f"曇天 **{cloudy_mj * scale:.1f}** MJ/m²"
     )
 
 # --- 葉と潅水（ふだんは日付から引いた値のままでよいので、たたんでおく）---
