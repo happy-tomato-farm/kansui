@@ -36,6 +36,7 @@ from config import (
     COVER_TRANSMITTANCE,
     DRIP_WETTED_FRACTION,
     HOUSE_SPECS,
+    LEACHING_FRACTION,
     LEAF_AREA_PER_LEAF_M2,
     RECIPE_RADIATION_COEF,
     ROOT_SYSTEM_MAX_UPTAKE_MM_PER_DAY,
@@ -331,7 +332,8 @@ with bottom[1]:
 with st.expander(
     f"🌿 葉と潅水の設定"
     f"（いまは {planned_leaves:.1f} 枚/m² ／ "
-    f"LAI {planned_leaves * LEAF_AREA_PER_LEAF_M2:.2f} ／ 上乗せ 0%）",
+    f"LAI {planned_leaves * LEAF_AREA_PER_LEAF_M2:.2f} ／ "
+    f"上乗せ {LEACHING_FRACTION * 100:.0f}%）",
     expanded=False,
 ):
     st.caption(
@@ -370,20 +372,27 @@ with st.expander(
     with top[2]:
         st.markdown("**④ 塩を流すための上乗せ [%]**")
         leaching_percent = st.number_input(
-            "上乗せ", min_value=0, max_value=150, value=0, step=5,
+            "上乗せ", min_value=0, max_value=150,
+            value=int(round(LEACHING_FRACTION * 100)), step=5,
             label_visibility="collapsed",
             help=(
-                "0〜150 の範囲。蒸散量に対して何％多く入れるか。既定は 0%。"
-                "排液の EC が上がってきたら増やす。"
+                "0〜150 の範囲。蒸散量に対して何％多く入れるか。"
+                "既定の 15% は作業日誌3作期904日の実績から決めた値で、"
+                "快晴日の実際の倍率（1.10〜1.23）の中ほど。"
+                "★増やしても吸える量は増えず、流亡と土の過湿が進むだけ。"
+                "排液の EC が上がったときだけ一時的に増やす。"
             ),
         )
         if leaching_percent == 0:
             st.caption(
                 "0% ＝ 蒸散量とちょうど同じ量。"
-                "実際の潅水記録はこれより3〜4割多い（塩を流すぶん）。"
+                "土耕では塩がたまるので、ふだんは 15% にしておく。"
             )
         else:
-            st.caption(f"蒸散量の {1 + leaching_percent / 100:.2f} 倍を入れる。")
+            st.caption(
+                f"蒸散量の {1 + leaching_percent / 100:.2f} 倍を入れる。"
+                f"実績（3作期904日）の通算は 1.09 倍、快晴日は 1.10〜1.23 倍。"
+            )
 
 # 気温・湿度は日射が決まってから推定するので、ここで計算
 auto = forecast_from_date(radiation, target_date)

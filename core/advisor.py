@@ -55,6 +55,8 @@ from config import (
     EXTINCTION_COEFFICIENT_K,
     FILM_DEGRADATION_FACTOR,
     HOUSE_SPECS,
+    LEACHING_FRACTION,
+    LEAF_AREA_PER_LEAF_M2,
     LEAF_CHARACTERISTIC_LENGTH_M,
     LOCAL_PRESSURE_KPA,
     RECIPE_RADIATION_COEF,
@@ -575,9 +577,10 @@ class IrrigationAdvice:
 def advise(
     forecast: DayForecast,
     house: str = "中央",
-    lai: float = 2.16,
+    # 目標葉枚数 18 枚/m² × 葉1枚 0.18 m²。呼び出し側がふだんは渡す。
+    lai: float = 18.0 * LEAF_AREA_PER_LEAF_M2,
     start_water_content: float | None = None,
-    leaching_fraction: float = 0.20,
+    leaching_fraction: float = LEACHING_FRACTION,
     wind_speed_m_per_s: float = WIND_SPEED_M_PER_S,
     water_balance_settings: WaterBalanceSettings | None = None,
     recipe_radiation_coef: float = RECIPE_RADIATION_COEF,
@@ -591,8 +594,12 @@ def advise(
         lai: 葉面積指数
         start_water_content: 朝の土壌体積含水率。省くと圃場容水量から始める。
         leaching_fraction: 塩を流すために上乗せする割合。
-            0.20 なら蒸散量の1.2倍を潅水する。土耕で EC を抑えるには
+            0.15 なら蒸散量の1.15倍を潅水する。土耕で EC を抑えるには
             ある程度の余剰が要るため、0 にはしない。
+            既定値の根拠は config.py の LEACHING_FRACTION（作業日誌
+            3作期904日の実績と突き合わせた値）。
+            ★増やせば吸えるわけではない。上乗せを増やすと流亡と
+            土の過湿だけが進む（同じく config.py に測定結果がある）。
         wind_speed_m_per_s: 群落内の風速
         water_balance_settings: 土壌側の設定
         recipe_radiation_coef: 液肥混入機レシピと合わせるための換算係数。
