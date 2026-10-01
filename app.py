@@ -135,26 +135,6 @@ def transpiration_curve(
     )
 
 
-def read_curve(curve: tuple[float, ...], radiation_mj: float) -> float:
-    """表を直線で結んで、その日射の蒸散量を読む [L/m²]。
-
-    ★レシピ側（JavaScript）と同じ読み方にしてある。
-      片方だけ読み方を変えると、同じ表から違う答えが出てしまう。
-    """
-    if radiation_mj <= RADIATION_GRID_MJ[0]:
-        return curve[0]
-    for index in range(1, len(RADIATION_GRID_MJ)):
-        high = RADIATION_GRID_MJ[index]
-        if radiation_mj <= high:
-            low = RADIATION_GRID_MJ[index - 1]
-            weight = (radiation_mj - low) / (high - low)
-            return curve[index - 1] * (1.0 - weight) + curve[index] * weight
-    # 格子の外（26MJ超）。最後の2点の傾きで延ばす。
-    span = RADIATION_GRID_MJ[-1] - RADIATION_GRID_MJ[-2]
-    slope = (curve[-1] - curve[-2]) / span
-    return curve[-1] + slope * (radiation_mj - RADIATION_GRID_MJ[-1])
-
-
 def panel(title: str, body: str, accent: str, background: str) -> None:
     """色のついた四角で囲んで表示する。
 
@@ -609,13 +589,11 @@ panel(
 # 朝の2つ（10MJあたり潅水量・日射予測）に加えて、
 #   curve  … 日射ごとの蒸散量の表。日中に日射が外れたとき、レシピ側が
 #            直線ではなく曲がりを保ったまま1日の合計を出し直せる。
-#   vclear … 快晴の日の合計潅水量。「1週間で使いたいN量」から
-#            設定倍率を決めるときの基準。★今日の予報で割ってはいけない。
-#            今日の日射で割ると、曇った日に液肥が5倍濃くなる。
 #   coef / film … レシピ側の設定とずれていないかを向こうで照合するため。
+#
+# ★中央と東の両方に入る。どれも面積あたりの値なのでハウスで変わらない。
+#   house はどちらのタブを開くかを決めるだけ。
 curve = transpiration_curve(day_of_year, lai, wind)
-leaching_ratio = 1.0 + leaching_percent / 100.0
-clear_irrigation_l_per_m2 = read_curve(curve, clear_mj) * leaching_ratio
 
 recipe_link = RECIPE_APP_URL + "?" + urlencode({
     "house": house,
@@ -623,14 +601,13 @@ recipe_link = RECIPE_APP_URL + "?" + urlencode({
     "eday": f"{advice.sensor_radiation_mj:.2f}",
     "need": f"{advice.water_per_10mj_l_per_m2:.3f}",
     "leach": f"{leaching_percent:d}",
-    "vclear": f"{clear_irrigation_l_per_m2:.3f}",
     "coef": f"{recipe_coef:.2f}",
     "film": f"{film_factor:.2f}",
     "curve": ",".join(f"{value:.4f}" for value in curve),
 })
 
 st.link_button(
-    f"🧪 液肥混入機レシピを開く（{house}・この数字を入れた状態で）",
+    "🧪 液肥混入機レシピを開く（中央・東の両方にこの数字を入れる）",
     recipe_link,
     width="stretch",
     help=(
@@ -643,8 +620,7 @@ st.caption(
     f"渡す数字: 10MJあたり潅水量 **{advice.water_per_10mj_l_per_m2:.2f}** L/m²　／　"
     f"日射予測 **{advice.sensor_radiation_mj:.1f}** MJ/m²　／　"
     f"上乗せ **{leaching_percent}%**　／　"
-    f"快晴の日の合計潅水量 **{clear_irrigation_l_per_m2:.2f}** L/m²"
-    f"（週N量から倍率を出す基準）"
+    f"日射ごとの蒸散量の表 **{len(curve)}** 点"
 )
 
 # 前提条件はふだん見なくてよいので、たたんでおく。
