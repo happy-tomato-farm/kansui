@@ -158,6 +158,70 @@ def transpiration_curve(
     )
 
 
+#: 「潅水基準を変えたらどうなるか」の表で振る L/10MJ の値。
+IRRIGATION_BASIS_GRID = (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
+
+
+@st.cache_data(show_spinner="潅水基準ごとの落ち着き先を計算している…")
+def irrigation_basis_outcomes(
+    effective_radiation_mj: float,
+    potential_transpiration_mm: float,
+    root_zone_depth_m: float,
+    wetted_fraction: float,
+    max_uptake_mm_per_day: float,
+    start_water_content: float,
+) -> tuple[dict, ...]:
+    """潅水基準ごとの「落ち着き先」を並べて返す。
+
+    【何をしているか】
+    L/10MJ を 1.0〜4.0 で振り、同じ天気が毎日つづいたときに
+    流亡率・pF・空気率がどこに落ち着くかを steady_state で求める。
+
+    ★計算の中身は変えていない。**呼び出しを覚えさせているだけ**。
+      steady_state を7回呼ぶので 2.7秒かかり、しかもこれまでは
+      日付やハウスを変えるたびに毎回走っていた（2026-10-07 に計測）。
+      入力が同じなら同じ答えになる純粋な計算なので、st.cache_data で覚えてよい。
+
+    【なぜ settings をばらして受け取るのか】
+    st.cache_data は引数で結果を見分ける。dataclass をそのまま渡すより、
+    中身の数値で受けたほうが取り違えが起きない（transpiration_curve と同じ作法）。
+
+    Returns:
+        表の1行ぶんの dict を並べたもの。`落ち着いたか` は後段の警告で使う。
+    """
+    settings = WaterBalanceSettings(
+        root_zone_depth_m=root_zone_depth_m,
+        wetted_fraction=wetted_fraction,
+        max_uptake_mm_per_day=max_uptake_mm_per_day,
+    )
+    outcomes = []
+    for basis in IRRIGATION_BASIS_GRID:
+        irrigation = basis * effective_radiation_mj / 10.0
+        steady = steady_state(
+            irrigation_mm=irrigation,
+            potential_transpiration_mm=potential_transpiration_mm,
+            settings=settings,
+            initial_water_content=start_water_content,
+        )
+        balance = steady.balance
+        outcomes.append({
+            "潅水基準 [L/10MJ]": basis,
+            "1日の潅水 [L/m²]": round(irrigation, 2),
+            "蒸散 [L/m²]": round(balance.actual_transpiration_mm, 2),
+            "潅水/蒸散": round(
+                irrigation / balance.actual_transpiration_mm, 2
+            ) if balance.actual_transpiration_mm > 0 else None,
+            "流亡率 [%]": round(balance.drainage_fraction * 100),
+            "夕方 pF": round(balance.end_pf, 2),
+            "最小空気率 [%]": round(balance.min_air_filled_porosity * 100, 1),
+            # 落ち着かない行は「—」を入れるので、列全体を文字列にそろえる
+            # （数値と文字列が混ざると表の変換で警告が出る）
+            "落ち着くまで [日]": f"{steady.days}" if steady.settled else "—",
+            "落ち着いたか": steady.settled,
+        })
+    return tuple(outcomes)
+
+
 def panel(title: str, body: str, accent: str, background: str) -> None:
     """色のついた四角で囲んで表示する。
 
@@ -828,33 +892,17 @@ st.caption(
     "**同じ天気が毎日つづいたときの落ち着き先**を出している。"
 )
 
-rows = []
-unsettled = []
-for basis in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0):
-    irrigation = basis * advice.effective_radiation_mj / 10.0
-    steady = steady_state(
-        irrigation_mm=irrigation,
-        potential_transpiration_mm=advice.transpiration_l_per_m2,
-        settings=water_settings,
-        initial_water_content=water_content_from_potential(potential_from_pf(start_pf)),
-    )
-    balance = steady.balance
-    if not steady.settled:
-        unsettled.append(basis)
-    rows.append({
-        "潅水基準 [L/10MJ]": basis,
-        "1日の潅水 [L/m²]": round(irrigation, 2),
-        "蒸散 [L/m²]": round(balance.actual_transpiration_mm, 2),
-        "潅水/蒸散": round(
-            irrigation / balance.actual_transpiration_mm, 2
-        ) if balance.actual_transpiration_mm > 0 else None,
-        "流亡率 [%]": round(balance.drainage_fraction * 100),
-        "夕方 pF": round(balance.end_pf, 2),
-        "最小空気率 [%]": round(balance.min_air_filled_porosity * 100, 1),
-        # 落ち着かない行は「—」を入れるので、列全体を文字列にそろえる
-        # （数値と文字列が混ざると表の変換で警告が出る）
-        "落ち着くまで [日]": f"{steady.days}" if steady.settled else "—",
-    })
+outcomes = irrigation_basis_outcomes(
+    effective_radiation_mj=advice.effective_radiation_mj,
+    potential_transpiration_mm=advice.transpiration_l_per_m2,
+    root_zone_depth_m=root_depth,
+    wetted_fraction=wetted,
+    max_uptake_mm_per_day=max_uptake,
+    start_water_content=water_content_from_potential(potential_from_pf(start_pf)),
+)
+unsettled = [r["潅水基準 [L/10MJ]"] for r in outcomes if not r["落ち着いたか"]]
+# 表に出すのは「落ち着いたか」以外の列（あれは下の警告で使う内部の値）
+rows = [{k: v for k, v in r.items() if k != "落ち着いたか"} for r in outcomes]
 st.dataframe(rows, width="stretch", hide_index=True)
 
 if unsettled:
