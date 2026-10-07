@@ -886,45 +886,69 @@ st.caption(
 
 st.divider()
 st.subheader("潅水基準を変えたらどうなるか")
+
+# ★たたんである（2026-10-07）。
+#
+# 【なぜ expander ではなく toggle なのか】
+# Streamlit は画面を上から下まで毎回ぜんぶ実行する。expander で見た目を
+# たたんでも、**中身の計算は走ってしまう**。この表は steady_state を7回
+# 呼ぶので 2.71 秒かかり、たたんでも速くならない。
+# toggle なら押すまで if の中に入らないので、本当に計算をしないで済む。
+#
+# 【隠してよい内容か】
+# この表と警告は「もし L/10MJ を 1.0〜4.0 に変えたら」という**仮の話**で、
+# 今日の潅水の判断そのものではない。今日の値についての警告は第3節に出る。
+# だから見たいときだけ出す形にしてよい。
+show_basis_table = st.toggle(
+    "表を出す（計算に2〜3秒かかる）",
+    value=False,
+    help=(
+        "L/10MJ を 1.0〜4.0 で振って、同じ天気が毎日つづいたときの"
+        "落ち着き先（流亡率・pF・空気率）を出す。"
+        "毎朝見るものではないので、押したときだけ計算する。"
+    ),
+)
 st.caption(
     "実務で使う **L/10MJ**（実質日射10MJあたりの潅水量）で振ったときに、"
     "流亡・pF・空気率がどう落ち着くか。"
     "**同じ天気が毎日つづいたときの落ち着き先**を出している。"
 )
 
-outcomes = irrigation_basis_outcomes(
-    effective_radiation_mj=advice.effective_radiation_mj,
-    potential_transpiration_mm=advice.transpiration_l_per_m2,
-    root_zone_depth_m=root_depth,
-    wetted_fraction=wetted,
-    max_uptake_mm_per_day=max_uptake,
-    start_water_content=water_content_from_potential(potential_from_pf(start_pf)),
-)
-unsettled = [r["潅水基準 [L/10MJ]"] for r in outcomes if not r["落ち着いたか"]]
-# 表に出すのは「落ち着いたか」以外の列（あれは下の警告で使う内部の値）
-rows = [{k: v for k, v in r.items() if k != "落ち着いたか"} for r in outcomes]
-st.dataframe(rows, width="stretch", hide_index=True)
-
-if unsettled:
-    st.warning(
-        f"**{'・'.join(f'{b:.1f}' for b in unsettled)} L/10MJ は落ち着かない。**"
-        f"潅水が蒸散に足りず、土が乾きつづける。"
-        f"表の pF はその時点の値で、日を追うごとにさらに上がる（＝もっと乾く）。"
+if show_basis_table:
+    outcomes = irrigation_basis_outcomes(
+        effective_radiation_mj=advice.effective_radiation_mj,
+        potential_transpiration_mm=advice.transpiration_l_per_m2,
+        root_zone_depth_m=root_depth,
+        wetted_fraction=wetted,
+        max_uptake_mm_per_day=max_uptake,
+        start_water_content=water_content_from_potential(
+            potential_from_pf(start_pf)),
     )
+    unsettled = [r["潅水基準 [L/10MJ]"] for r in outcomes if not r["落ち着いたか"]]
+    # 表に出すのは「落ち着いたか」以外の列（あれは下の警告で使う内部の値）
+    rows = [{k: v for k, v in r.items() if k != "落ち着いたか"} for r in outcomes]
+    st.dataframe(rows, width="stretch", hide_index=True)
 
-# 落ち着かない行はひとつ上で別に知らせているので、ここでは除く
-dry_rows = [
-    r for r in rows
-    if r["夕方 pF"] >= 2.7 and r["潅水基準 [L/10MJ]"] not in unsettled
-]
-if dry_rows:
-    st.warning(
-        f"**{'・'.join(f'{r['潅水基準 [L/10MJ]']:.1f}' for r in dry_rows)} L/10MJ は"
-        f"乾かしすぎ。**"
-        f"落ち着いてはいるが、それは土が乾いて根が吸えなくなり、"
-        f"蒸散が潅水量まで抑えられた結果（教科書 式9.22）。"
-        f"**落ち着いた＝健全、ではない。**pF と蒸散量を必ず見ること。"
-    )
+    if unsettled:
+        st.warning(
+            f"**{'・'.join(f'{b:.1f}' for b in unsettled)} L/10MJ は落ち着かない。**"
+            f"潅水が蒸散に足りず、土が乾きつづける。"
+            f"表の pF はその時点の値で、日を追うごとにさらに上がる（＝もっと乾く）。"
+        )
+
+    # 落ち着かない行はひとつ上で別に知らせているので、ここでは除く
+    dry_rows = [
+        r for r in rows
+        if r["夕方 pF"] >= 2.7 and r["潅水基準 [L/10MJ]"] not in unsettled
+    ]
+    if dry_rows:
+        st.warning(
+            f"**{'・'.join(f'{r['潅水基準 [L/10MJ]']:.1f}' for r in dry_rows)} "
+            f"L/10MJ は乾かしすぎ。**"
+            f"落ち着いてはいるが、それは土が乾いて根が吸えなくなり、"
+            f"蒸散が潅水量まで抑えられた結果（教科書 式9.22）。"
+            f"**落ち着いた＝健全、ではない。**pF と蒸散量を必ず見ること。"
+        )
 
 st.caption(
     f"いまの見立て（上乗せ {leaching_percent}%）は "
