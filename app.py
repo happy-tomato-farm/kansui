@@ -40,6 +40,7 @@ from config import (
     FEED_EC_BAND_BY_MONTH,
     FEED_EC_CONCENTRATION_FACTOR_ASSUMED,
     FERTILIZER_N_EFFICIENCY,
+    FERTILIZER_N_FRACTION_DEFAULT,
     FIELD_CAPACITY_POTENTIAL_J_PER_KG,
     LEACHING_FRACTION,
     LEAF_AREA_PER_LEAF_M2,
@@ -55,8 +56,6 @@ from config import (
     WIND_SPEED_M_PER_S,
 )
 
-#: 液肥の肥料のN比の既定値。トケル養液配合1号（液肥混入機レシピの既定）。
-FERTILIZER_N_FRACTION_DEFAULT = 0.100
 from core.advisor import (
     MONTHS_WITH_WEAK_DATA,
     advise,

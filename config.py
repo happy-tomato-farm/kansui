@@ -1861,6 +1861,10 @@ FEED_EC_BAND_LOW_LIGHT_ECE = 4.0
 #: 給液ECの下限 [dS/m]。作期中は共通。
 FEED_EC_BAND_FLOOR = 0.40
 
+#: 液肥の肥料のN比の既定値。トケル養液配合1号（液肥混入機レシピの既定）。
+#: ★app.py と tools/ の両方で使うので config に置いてある。
+FERTILIZER_N_FRACTION_DEFAULT = 0.100
+
 #: 月別の給液ECの帯 [dS/m]。(下限, 上限)。栽培していない月は (0, 0)。
 FEED_EC_BAND_BY_MONTH = {
     8: (0.00, 0.00),    # 定植前。液肥は流さない
