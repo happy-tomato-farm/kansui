@@ -37,15 +37,26 @@ from config import (
     COVER_TRANSMITTANCE,
     DRIP_WETTED_FRACTION,
     HOUSE_SPECS,
+    FEED_EC_BAND_BY_MONTH,
+    FEED_EC_CONCENTRATION_FACTOR_ASSUMED,
+    FERTILIZER_N_EFFICIENCY,
+    FIELD_CAPACITY_POTENTIAL_J_PER_KG,
     LEACHING_FRACTION,
     LEAF_AREA_PER_LEAF_M2,
+    OPERATED_FEED_EC_BY_MONTH,
     RECIPE_RADIATION_COEF,
     ROOT_SYSTEM_MAX_UPTAKE_MM_PER_DAY,
     ROOT_ZONE_DEPTH_M,
+    SALINITY_YIELD_THRESHOLD_ECE,
+    SOIL_N_SUPPLY_KG_PER_10A,
     SOLAR_SITE,
     STOMATA_SCALE_FACTOR,
+    TARGET_FRESH_YIELD_KG_PER_M2,
     WIND_SPEED_M_PER_S,
 )
+
+#: 液肥の肥料のN比の既定値。トケル養液配合1号（液肥混入機レシピの既定）。
+FERTILIZER_N_FRACTION_DEFAULT = 0.100
 from core.advisor import (
     MONTHS_WITH_WEAK_DATA,
     advise,
@@ -55,7 +66,17 @@ from core.advisor import (
 )
 from core.canopy import leaf_count_per_m2
 from core.irrigation_history import describe_source, lookup
+from core.nitrogen import advise_fertilizer_n, advise_fertilizer_n_week
 from core.psychrometry import saturation_vapor_pressure_kpa
+from core.salinity import (
+    clamp_daily_n_to_ec_band,
+    daily_n_from_feed_ec,
+    osmotic_potential_j_per_kg,
+    salinity_response,
+    soil_solution_to_saturated_extract,
+    steady_state_concentration_factor,
+    uptake_driving_force_ratio,
+)
 from core.soil import (
     FIELD_CAPACITY_WATER_CONTENT,
     WILTING_POINT_WATER_CONTENT,
@@ -76,6 +97,9 @@ st.set_page_config(page_title="今日の潅水量のめやす", page_icon="💧"
 
 #: 1アールは100m²。10アール＝1000m²。
 M2_PER_10A = 1000.0
+
+#: 1週間のN量を見るときの日数。レシピ側が nweek を 7 で割るので 7 に揃える。
+WEEK_DAYS = 7
 
 #: 液肥混入機レシピアプリの場所。朝の数字をここへ渡す。
 RECIPE_APP_URL = "https://happy-tomato-farm.github.io/ekihi/"
@@ -579,49 +603,13 @@ panel(
     background="#eaf6ee",
 )
 
-# --- 液肥混入機レシピへそのまま渡す ---
-#
-# 【なぜリンクで渡すのか】（2026-10-01）
-# レシピアプリは記録をスプレッドシートに持ち、電波が無くても動く。
-# この画面に取り込むとその2つを失うので、数字だけ渡して役割を分ける。
-#
-# 【渡すもの】
-# 朝の2つ（10MJあたり潅水量・日射予測）に加えて、
-#   curve  … 日射ごとの蒸散量の表。日中に日射が外れたとき、レシピ側が
-#            直線ではなく曲がりを保ったまま1日の合計を出し直せる。
-#   coef / film … レシピ側の設定とずれていないかを向こうで照合するため。
-#
-# ★中央と東の両方に入る。どれも面積あたりの値なのでハウスで変わらない。
-#   house はどちらのタブを開くかを決めるだけ。
+# 日射ごとの蒸散量の表。レシピへ渡す（組み立ては第7節の末尾）。
+# ★ここで作るのは、下の「この日の前提条件」でも点数を見せるため。
 curve = transpiration_curve(day_of_year, lai, wind)
 
-recipe_link = RECIPE_APP_URL + "?" + urlencode({
-    "house": house,
-    "date": target_date.isoformat(),
-    "eday": f"{advice.sensor_radiation_mj:.2f}",
-    "need": f"{advice.water_per_10mj_l_per_m2:.3f}",
-    "leach": f"{leaching_percent:d}",
-    "coef": f"{recipe_coef:.2f}",
-    "film": f"{film_factor:.2f}",
-    "curve": ",".join(f"{value:.4f}" for value in curve),
-})
-
-st.link_button(
-    "🧪 液肥混入機レシピを開く（中央・東の両方にこの数字を入れる）",
-    recipe_link,
-    width="stretch",
-    help=(
-        "レシピアプリが開き、10MJあたり潅水量と日射予測が入った状態になる。"
-        "日中に日射が外れたときに合計を出し直すための表も一緒に渡している。"
-        "すでに記録してある日は、勝手に上書きせず確認を出す。"
-    ),
-)
-st.caption(
-    f"渡す数字: 10MJあたり潅水量 **{advice.water_per_10mj_l_per_m2:.2f}** L/m²　／　"
-    f"日射予測 **{advice.sensor_radiation_mj:.1f}** MJ/m²　／　"
-    f"上乗せ **{leaching_percent}%**　／　"
-    f"日射ごとの蒸散量の表 **{len(curve)}** 点"
-)
+# ★液肥混入機レシピへのリンクは**第7節の末尾**に移した（2026-10-06）。
+#   N量もリンクで渡すようになり、それが決まるのは第7節だから。
+#   潅水とNの両方が決まってから1つのボタンで渡す形にしてある。
 
 # 前提条件はふだん見なくてよいので、たたんでおく。
 # 数字が思ったのと違うときに、ここを開いて元をたどる。
@@ -881,7 +869,445 @@ columns[2].metric(
 
 
 # =============================================================================
-# 7. 参考（たたむ）
+# 7. 施肥のめやす（N量とEC）
+# =============================================================================
+# 【出口はひとつ】
+# 液肥混入機レシピの「1日のN量」に入れる数字を出す。
+# 潅水が「10MJあたり潅水量」を手渡しているのと同じ形。
+#
+# 【役割分担】★2026-10-03 に入れ替えた
+#   主（量を決める）… N需要から。目標収量から逆算し、受光量で日に配る
+#   従（挟む）      … 給液ECの帯。危ない側に出たときだけ効く
+#
+# 以前は「EC目標から」を既定にしていた。これは誤りだった。
+# 公的な施肥基準はすべて「1日のN量」で書かれており、EC一定の管理は
+# 草勢過多・異常茎・尻腐果の原因として報告されている。
+# さらにこの圃場の2025年の土壌診断（硝酸態窒素 16.9 mg/100g）が、
+# EC目標で流し続けると溜まることを実際に示していた。
+# 出典と経緯は config 第11-7節の撤回文と第11-8節。
+#
+# 「EC目標から」は比較用に残してある（デルフィの指導の形を見るため）。
+
+st.divider()
+st.subheader("🧪 施肥のめやす")
+
+fert_row = st.columns([1.1, 1.3, 1])
+with fert_row[0]:
+    target_yield = st.number_input(
+        "目標収量 [kg/m²]",
+        min_value=10.0, max_value=50.0,
+        value=TARGET_FRESH_YIELD_KG_PER_M2, step=0.5,
+        help="作期を通した果実生重。直近4作期の中央ハウスは 30.4〜31.7。",
+    )
+with fert_row[1]:
+    fert_mode = st.radio(
+        "決め方",
+        ("N需要から＋ECの帯で挟む（推奨）", "EC目標から（比較用）"),
+        help=(
+            "量はN需要で決め、給液ECが月別の帯から外れたときだけ戻す。"
+            "公的な施肥基準はすべて1日のN量で書かれている（config 第11-8節）。"
+            "「EC目標から」はデルフィの指導の形を見るための比較用。"
+        ),
+    )
+with fert_row[2]:
+    fert_n_fraction = st.number_input(
+        "肥料のN比",
+        min_value=0.01, max_value=0.50,
+        value=FERTILIZER_N_FRACTION_DEFAULT, step=0.005, format="%.3f",
+        help="トケル養液配合1号なら 0.100。レシピ側で選んでいる肥料に合わせる。",
+    )
+
+# --- N需要から出す（作期の合計と、その日の取り分）---
+fert_advice = advise_fertilizer_n(
+    target_date, advice.sensor_radiation_mj, target_yield)
+
+# --- 1週間の目標（快晴が7日つづいた場合）---
+#
+# 【なぜ快晴基準なのか】
+# レシピ側の「1週間で使いたいN量」は `nday = nweek ÷ 7` と割るだけなので、
+# 快晴7日ぶんの合計を渡さないと、向こうで割った値とこちらの日別の値がずれる。
+# レシピの欄にも「快晴が7日つづいた場合の量」と書いてある。
+#
+# ★快晴日射は日付で変わる（冬は少なく夏は多い）ので、
+#   1つの値を7回ではなく、日ごとの快晴値を並べて渡す。
+#   透過率は基準値（transmittance_base）で揃える。画面で τ を触っても
+#   週の目標がぶれないようにするため。
+clear_week_radiations = [
+    sensor_basis_radiation_mj(
+        target_date + dt.timedelta(days=offset),
+        tau=clear_sky_tau((target_date + dt.timedelta(days=offset))
+                          .timetuple().tm_yday),
+        cover_transmittance=transmittance_base,
+    )
+    for offset in range(WEEK_DAYS)
+]
+fert_week = advise_fertilizer_n_week(
+    target_date, clear_week_radiations, target_yield)
+
+default_feed_ec = OPERATED_FEED_EC_BY_MONTH.get(target_date.month, 0.0)
+band_low, band_high = FEED_EC_BAND_BY_MONTH[target_date.month]
+irrigation_l = advice.recommended_irrigation_l_per_m2
+use_ec_mode = fert_mode.startswith("EC")
+
+if use_ec_mode:
+    # --- 比較用: EC目標から出す ---
+    # ★key に日付を入れておく。日付を変えたら、その月の運用値が初期値として
+    #   入り直す（既存の τ・透過率の欄と同じ作法）。
+    feed_ec_target = st.number_input(
+        f"目標の給液EC [dS/m]（{target_date.month}月の運用値 "
+        f"{default_feed_ec:.2f}／帯 {band_low:.2f}〜{band_high:.2f}）",
+        min_value=0.0, max_value=3.0,
+        value=float(default_feed_ec), step=0.05, format="%.2f",
+        key=f"feed_ec_{target_date}",
+        help=(
+            "運用値は実績から逆算したもの（config 第11-7節）。"
+            "12月が最大 1.93、5〜6月が最小 0.44〜0.47。"
+            "12月の運用値は帯の上限 1.60 を超えている。"
+        ),
+    )
+    daily_n = daily_n_from_feed_ec(
+        feed_ec_target, irrigation_l, fert_n_fraction)
+    feed_ec_shown = feed_ec_target
+    banded = None
+else:
+    # --- 推奨: N需要から出し、ECの帯で挟む ---
+    banded = clamp_daily_n_to_ec_band(
+        fert_advice.daily_n_kg_per_10a, irrigation_l,
+        target_date.month, fert_n_fraction)
+    daily_n = banded.daily_n_kg_per_10a
+    feed_ec_shown = banded.feed_ec_ds_per_m
+
+n_mg_per_l_shown = (
+    daily_n / irrigation_l * 1000.0) if irrigation_l > 0 else 0.0
+
+planting_note = (
+    '<div style="margin-top:0.6rem;"><b>定植前なので液肥は出さない。</b></div>'
+    if fert_advice.before_planting else ""
+)
+# 帯に当たったかどうかを囲みの中に書く。黙って値を変えないため。
+if banded is not None and banded.is_clamped:
+    band_note = (
+        f'<div style="margin-top:0.6rem; font-weight:700;">'
+        f'ECの帯に当たったので戻した</div>'
+        f'<div style="font-size:0.9rem;">{banded.describe()}</div>'
+    )
+elif banded is not None:
+    band_note = (
+        f'<div style="margin-top:0.6rem; font-size:0.9rem;">'
+        f'帯（{band_low:.2f}〜{band_high:.2f} dS/m）の中なので、'
+        f'ECは何もしていない</div>'
+    )
+else:
+    band_note = (
+        f'<div style="margin-top:0.6rem; font-size:0.9rem;">'
+        f'比較用のEC目標モード。帯は {band_low:.2f}〜{band_high:.2f} dS/m</div>'
+    )
+
+panel(
+    "液肥混入機レシピに入れる数字（N量）",
+    f"""
+    <div style="font-size:2.2rem; font-weight:800; line-height:1.2;">
+      {daily_n:.3f} <span style="font-size:1.1rem">kg-N/10a</span>
+    </div>
+    <div style="margin:0.3rem 0 0.7rem 0;">「1日に流したいN量」の欄に入れる</div>
+    <div style="font-size:1.5rem; font-weight:800; line-height:1.2;">
+      {fert_week.week_n_kg_per_10a:.3f}
+      <span style="font-size:1rem">kg-N/10a ／ 1週間</span>
+    </div>
+    <div style="margin:0.2rem 0 0.7rem 0; font-size:0.9rem;">
+      「1週間で使いたいN量」の欄に入れる（快晴が{WEEK_DAYS}日つづいた場合）
+    </div>
+    <table style="width:100%; border-collapse:collapse;">
+      <tr><td>給液EC</td>
+          <td style="text-align:right"><b>{feed_ec_shown:.2f}</b> dS/m</td></tr>
+      <tr><td>　{target_date.month}月の帯</td>
+          <td style="text-align:right">{band_low:.2f} 〜 {band_high:.2f} dS/m</td></tr>
+      <tr><td>液肥のN濃度</td>
+          <td style="text-align:right"><b>{n_mg_per_l_shown:.0f}</b> mg-N/L</td></tr>
+      <tr><td>そのときの潅水量</td>
+          <td style="text-align:right">{irrigation_l:.2f} L/m²</td></tr>
+    </table>
+    {band_note}
+    {planting_note}
+    """,
+    accent="#1b5e7a" if not fert_advice.before_planting else "#8a6d00",
+    background="#eaf2f6" if not fert_advice.before_planting else "#fdf6e0",
+)
+
+st.caption(
+    "この数字をレシピの「N量」欄に入れると、設定倍率が決まる。"
+    "レシピ側は倍率を固定するので、日中に潅水量を変えてもECは一定のまま、"
+    "N量だけが潅水量に合わせて増減する。"
+)
+with st.expander(
+        f"1週間の目標の内訳（快晴が{WEEK_DAYS}日つづいた場合）"):
+    st.caption(
+        f"レシピ側の「1週間で使いたいN量」は `1日N量 = 週N量 ÷ 7` と割るだけ。"
+        f"だから**快晴{WEEK_DAYS}日ぶんの合計**を渡す。"
+        f"快晴日射は日付で変わるので、1つの値を{WEEK_DAYS}回ではなく"
+        f"日ごとの値を並べて足している。"
+    )
+    week_rows = []
+    for offset, radiation_clear in enumerate(clear_week_radiations):
+        day_date = target_date + dt.timedelta(days=offset)
+        day_advice = advise_fertilizer_n(day_date, radiation_clear, target_yield)
+        week_rows.append({
+            "日付": day_date.isoformat(),
+            "快晴日射 MJ/m²": round(radiation_clear, 1),
+            "受光量 MJ/m²": round(day_advice.light_capture_mj, 1),
+            "N量 kg/10a": round(day_advice.daily_n_kg_per_10a, 4),
+            "備考": "定植前" if day_advice.before_planting else "",
+        })
+    st.dataframe(week_rows, width="stretch", hide_index=True)
+    st.write(
+        f"| | |\n|---|---|\n"
+        f"| 1週間の合計（★レシピに入れる） | "
+        f"**{fert_week.week_n_kg_per_10a:.3f}** kg-N/10a |\n"
+        f"| 7で割った1日ぶん | "
+        f"{fert_week.daily_n_kg_per_10a:.4f} kg-N/10a |\n"
+        f"| 今日の分（入れた日射 "
+        f"{advice.sensor_radiation_mj:.1f} MJ/m² のとき） | "
+        f"{fert_advice.daily_n_kg_per_10a:.4f} kg-N/10a |\n"
+        f"| 作期に対する取り分 | {fert_week.share * 100:.2f}% |\n"
+    )
+    st.caption(
+        f"今日の分が7で割った値より少なければ、今日は快晴より暗いということ。"
+        f"{fert_week.describe()}。"
+    )
+    st.caption(
+        "★**週で見るのに意味がある。**Nの吸収はその日の光合成と日単位では"
+        "一致しない（植物は硝酸を液胞に貯める）。7〜10日でならして見るのが"
+        "現実的で、レシピ側が週の欄を持っているのもそのため。"
+    )
+
+st.caption(
+    "★**量はN需要で決め、ECは帯で挟むだけ**。"
+    "公的な施肥基準（道南農試 0.075〜0.60 kg-N/10a・日）はすべてN量で書かれ、"
+    "EC一定の管理は草勢過多・異常茎・尻腐果の原因として報告されている"
+    "（愛知県 2025）。帯の根拠は config 第11-8節。"
+)
+
+# --- 2つの決め方を並べる ---
+st.markdown("**決め方を並べる**")
+compare = st.columns(3)
+compare[0].metric(
+    "① N需要から（素）",
+    f"{fert_advice.daily_n_kg_per_10a:.3f} kg/10a",
+    help="目標収量から逆算した作期の施肥Nを、その日の受光量の取り分で割った値",
+)
+banded_preview = clamp_daily_n_to_ec_band(
+    fert_advice.daily_n_kg_per_10a, irrigation_l,
+    target_date.month, fert_n_fraction)
+compare[1].metric(
+    "② ①をECの帯で挟む ★これを使う",
+    f"{banded_preview.daily_n_kg_per_10a:.3f} kg/10a",
+    delta=(
+        f"{banded_preview.daily_n_kg_per_10a - fert_advice.daily_n_kg_per_10a:+.3f}"
+        if banded_preview.is_clamped else "帯の中"
+    ),
+    delta_color="off",
+    help=f"{target_date.month}月の帯 {band_low:.2f}〜{band_high:.2f} dS/m で挟んだ値",
+)
+compare[2].metric(
+    "③ EC目標から（以前の既定）",
+    f"{daily_n_from_feed_ec(default_feed_ec, irrigation_l, fert_n_fraction):.3f}"
+    f" kg/10a",
+    help=(
+        f"{target_date.month}月の運用値 EC {default_feed_ec:.2f} dS/m のとき。"
+        f"参考として残している"
+    ),
+)
+
+# --- 作期の見通し ---
+with st.expander("作期を通した見通し（N需要の内訳）"):
+    st.write(
+        f"| | kg-N/10a |\n|---|---|\n"
+        f"| 作期の吸収N需要 | {fert_advice.season_uptake_kg_per_10a:.1f} |\n"
+        f"| 地力窒素（土が出す分） | {SOIL_N_SUPPLY_KG_PER_10A:.1f} |\n"
+        f"| 足りない分 | "
+        f"{fert_advice.season_uptake_kg_per_10a - SOIL_N_SUPPLY_KG_PER_10A:.1f} |\n"
+        f"| ÷ 利用率 {FERTILIZER_N_EFFICIENCY:.2f} → 作期の施肥N | "
+        f"**{fert_advice.season_fertilizer_kg_per_10a:.1f}** |\n"
+    )
+    st.caption(
+        f"実績（中央ハウス・直近4作期）は 47〜51 kg-N/10a。"
+        f"作期の平年受光量 {fert_advice.season_light_capture_mj:.0f} MJ/m² に対し、"
+        f"この日の取り分は {fert_advice.share * 100:.3f}%。"
+    )
+    st.caption(
+        "★地力窒素と利用率は**対で使う値**。片方だけ動かすと合わなくなる"
+        "（config 第10-4・10-5節）。"
+    )
+    st.write(
+        f"**公的基準と突き合わせる**\n\n"
+        f"| | kg-N/10a・日 |\n|---|---|\n"
+        f"| 道南農試の養液土耕の基準 | 0.075 / 0.15 / 0.30 / 0.60 |\n"
+        f"| うちの作期の平均"
+        f"（{fert_advice.season_fertilizer_kg_per_10a:.0f} ÷ 約290日） | "
+        f"**{fert_advice.season_fertilizer_kg_per_10a / 290.0:.3f}** |\n"
+    )
+    st.caption(
+        "基準の下側の帯に乗る。堆肥と地力があるぶん低めで筋が通っている。"
+        "基準の段階は**葉柄の硝酸濃度**で選ぶ方式なので、NO₃メーターがあれば"
+        "この表のどこにいるかを年に数回確かめられる（config 第11-8節①）。"
+    )
+
+# --- ECが吸水に効く量 ---
+with st.expander("そのECは吸水をどれだけ削るか"):
+    # 根圏ECは給液ECより濃い。流亡率から濃縮倍率を出す。
+    leach = advice.drainage_fraction
+    if leach >= 0.02:
+        factor = steady_state_concentration_factor(leach)
+        root_ec = feed_ec_shown * factor
+        factor_note = f"流亡率 {leach * 100:.0f}% → 濃縮 {factor:.1f} 倍"
+    else:
+        # 流亡がほぼ無い日は落ち着き先が無い。暫定の濃縮倍率で代用する。
+        root_ec = feed_ec_shown * FEED_EC_CONCENTRATION_FACTOR_ASSUMED
+        factor_note = (
+            f"流亡率 {leach * 100:.1f}% では落ち着き先が無い"
+            f"（塩は溜まり続ける）。暫定で"
+            f"{FEED_EC_CONCENTRATION_FACTOR_ASSUMED:.0f}倍と置いた"
+        )
+
+    osmotic = osmotic_potential_j_per_kg(root_ec)
+    ratio = uptake_driving_force_ratio(
+        FIELD_CAPACITY_POTENTIAL_J_PER_KG, root_ec)
+    lost_mm = advice.transpiration_l_per_m2 * (1.0 - ratio)
+    ece = soil_solution_to_saturated_extract(root_ec, FIELD_CAPACITY_WATER_CONTENT)
+    response = salinity_response(ece)
+
+    st.write(
+        f"| | |\n|---|---|\n"
+        f"| 給液EC | {feed_ec_shown:.2f} dS/m |\n"
+        f"| 根圏EC（見込み） | {root_ec:.2f} dS/m（{factor_note}） |\n"
+        f"| 浸透ポテンシャル | {osmotic:.0f} J/kg "
+        f"（圃場容水量のマトリック {FIELD_CAPACITY_POTENTIAL_J_PER_KG} J/kg の "
+        f"{osmotic / FIELD_CAPACITY_POTENTIAL_J_PER_KG:.0f} 倍） |\n"
+        f"| 吸水の駆動力 | {ratio * 100:.1f}%（{(1 - ratio) * 100:.1f}% 減） |\n"
+        f"| ECで失う蒸散 | {lost_mm:.2f} L/m²/日 |\n"
+        f"| ECe（文献と比べる基準） | {ece:.2f} dS/m |\n"
+        f"| 塩害による収量比 | {response.yield_ratio * 100:.1f}% |\n"
+        f"| 糖度の変化 | {response.brix_change:+.2f} °Brix |\n"
+    )
+    st.caption(
+        "★**十分に湿った土では、根が感じる水ポテンシャルはECで決まる。**"
+        "浸透ポテンシャルはマトリックポテンシャルの12〜31倍ある。"
+        "第9章の式9.20・9.22（含水率だけで吸水を決める）にはこの項が無い。"
+    )
+    st.caption(
+        "★根圏ECは**実測で確かめていない**。土壌診断（年1回・作終わり）の"
+        "3点しか突き合わせ先がなく、3作期のうち1作期は大きく外れた。"
+        "EC計で排液を月1回測れば、ここが一気に締まる。"
+    )
+
+if feed_ec_shown > 0.0:
+    ece_now = soil_solution_to_saturated_extract(
+        feed_ec_shown * FEED_EC_CONCENTRATION_FACTOR_ASSUMED,
+        FIELD_CAPACITY_WATER_CONTENT)
+    if ece_now > SALINITY_YIELD_THRESHOLD_ECE:
+        if target_date.month in (4, 5, 6):
+            # 強光期。文献で「強い光 × 高EC で尻腐果」が報告されている
+            st.error(
+                f"**強光期に濃すぎる。**ECe の見込み {ece_now:.2f} dS/m が"
+                f"しきい値 {SALINITY_YIELD_THRESHOLD_ECE} dS/m を超えている。"
+                f"強い光と高ECが重なると尻腐果が出る（config 第11-8節④）。"
+                f"4〜6月の帯の上限 {band_high:.2f} dS/m は、ここを譲らないための値。"
+            )
+        else:
+            st.warning(
+                f"ECe の見込み {ece_now:.2f} dS/m が塩害のしきい値 "
+                f"{SALINITY_YIELD_THRESHOLD_ECE} dS/m を超えている。"
+                f"収量を糖度に振り替えている状態。低日射期はこれが狙い"
+                f"（生殖側へのsteering）だが、春に持ち込まないこと。"
+            )
+
+if target_date.month in (9, 10):
+    st.warning(
+        "**9〜10月は盲点。**流亡がほぼゼロで塩が出ていく先がなく、"
+        "土も乾いている（含水率 0.26）ので根圏ECが年間で最高になる。"
+        "吸水の駆動力の減りも最大（19%）で、水も最も届いていない。"
+        "デルフィの指導は冬と春の話で、秋のことを言っていない。"
+        "排液のECを測るまで判断を保留すること（README「段5」）。"
+    )
+
+
+# -----------------------------------------------------------------------------
+# 7-2. 液肥混入機レシピへそのまま渡す（段7）
+# -----------------------------------------------------------------------------
+# 【なぜリンクで渡すのか】（2026-10-01）
+# レシピアプリは記録をスプレッドシートに持ち、電波が無くても動く。
+# この画面に取り込むとその2つを失うので、数字だけ渡して役割を分ける。
+#
+# 【渡すもの】
+#   need   … 10MJあたり潅水量 [L/m²]
+#   eday   … 1日の日射予測 [MJ/m²]
+#   leach  … 塩を流すための上乗せ [%]
+#   curve  … 日射ごとの蒸散量の表。日中に日射が外れたとき、レシピ側が
+#            直線ではなく曲がりを保ったまま1日の合計を出し直せる。
+#   coef / film … レシピ側の設定とずれていないかを向こうで照合するため。
+#
+# ★段7（2026-10-06）で N も渡すようにした。
+#   nday   … その日のN量 [kg-N/10a]。ECの帯で挟んだあとの値
+#   nweek  … 1週間の目標 [kg-N/10a]（快晴が7日つづいた場合）
+#   master … どちらを「主」にするか。**"n"（nday）を主にする**
+#
+# 【なぜ nday を主にするのか】
+# レシピ側は master="nweek" だと `nday = nweek ÷ 7` と割る。これは
+# 「天気に関係なく毎日同じN量」という意味になり、暗い日に倍率が上がる。
+# こちらは N需要を受光量に比例させているので、日射が落ちればN量も落ちる。
+# そのとき潅水量も落ちるので、**倍率はほぼ動かないのが正しい**
+# （必要ECの変化は 10月 +4%・5月 −1%。ただし冬は +38% で例外）。
+# だから日ごとに出した nday を主にし、nweek は向こうの
+# 「1週間のN量の着地」の表示だけに使わせる。
+#   ★レシピ側も「不足を見せるだけにして、こちらから倍率は動かさない」
+#     という作りになっているので、噛み合う。
+#
+# ★中央と東の両方に入る。どれも面積あたりの値なのでハウスで変わらない。
+#   house はどちらのタブを開くかを決めるだけ。
+
+st.markdown("---")
+
+recipe_link = RECIPE_APP_URL + "?" + urlencode({
+    "house": house,
+    "date": target_date.isoformat(),
+    "eday": f"{advice.sensor_radiation_mj:.2f}",
+    "need": f"{advice.water_per_10mj_l_per_m2:.3f}",
+    "leach": f"{leaching_percent:d}",
+    "coef": f"{recipe_coef:.2f}",
+    "film": f"{film_factor:.2f}",
+    "curve": ",".join(f"{value:.4f}" for value in curve),
+    "nday": f"{daily_n:.4f}",
+    "nweek": f"{fert_week.week_n_kg_per_10a:.3f}",
+    "master": "n",
+})
+
+st.link_button(
+    "🧪 液肥混入機レシピを開く（中央・東の両方にこの数字を入れる）",
+    recipe_link,
+    width="stretch",
+    help=(
+        "レシピアプリが開き、潅水量・日射予測・N量が入った状態になる。"
+        "日中に日射が外れたときに合計を出し直すための表も一緒に渡している。"
+        "すでに記録してある日は、勝手に上書きせず確認を出す。"
+    ),
+)
+st.caption(
+    f"渡す数字: 10MJあたり潅水量 **{advice.water_per_10mj_l_per_m2:.2f}** L/m²　／　"
+    f"日射予測 **{advice.sensor_radiation_mj:.1f}** MJ/m²　／　"
+    f"上乗せ **{leaching_percent}%**　／　"
+    f"1日のN量 **{daily_n:.3f}** kg-N/10a　／　"
+    f"1週間のN量 **{fert_week.week_n_kg_per_10a:.3f}** kg-N/10a　／　"
+    f"日射ごとの蒸散量の表 **{len(curve)}** 点"
+)
+st.caption(
+    "★**レシピ側が `nday` / `nweek` を受け取れるようにするまでは、"
+    "N量は手で入れること。**リンクには入っているが、向こうの "
+    "`paramsWoYomu()` がまだ読んでいない（README「段7」）。"
+)
+
+
+# =============================================================================
+# 8. 参考（たたむ）
 # =============================================================================
 
 st.divider()
