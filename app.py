@@ -184,11 +184,58 @@ def panel(title: str, body: str, accent: str, background: str) -> None:
     )
 
 
+def recipe_button_html(link: str, note: str = "") -> str:
+    """液肥混入機レシピへ飛ぶ、黄色く目立つボタンの HTML を返す。
+
+    【なぜ st.link_button を使わないのか】
+    あちらは色を変えられない。朝いちばんに押す出口なので、
+    ほかの部品に埋もれないよう色で区別する（panel と同じ理由で HTML を書く）。
+
+    【スマホ前提の作り】
+    - 幅いっぱい・高さ大きめ（指で押しやすい的にする）
+    - 文字は折り返して読める大きさに保つ
+    - 別タブで開く。めやすの画面を閉じずに行き来できる
+
+    Args:
+        link: 飛び先の URL（数字を載せたもの）
+        note: ボタンの下に小さく添える一行（渡す数字など）。空なら出さない
+    """
+    under = (
+        f'<div style="font-size:0.78rem; color:#5b5b5b; margin:0.25rem 0 0.9rem 0;'
+        f' text-align:center;">{note}</div>'
+        if note else '<div style="margin-bottom:0.9rem;"></div>'
+    )
+    return f"""
+    <a href="{link}" target="_blank" rel="noopener" style="
+        display:block; width:100%; box-sizing:border-box;
+        background:#ffc733; color:#3d2f00;
+        border:2px solid #d9a400; border-radius:10px;
+        padding:0.95rem 0.8rem; text-align:center;
+        font-weight:800; font-size:1.02rem; line-height:1.4;
+        text-decoration:none;
+        box-shadow:0 2px 4px rgba(0,0,0,0.15);
+    ">🧪 液肥混入機レシピを開く<br>
+      <span style="font-size:0.82rem; font-weight:600;">
+        中央・東の両方にこの数字が入る
+      </span>
+    </a>
+    {under}
+    """
+
+
 # =============================================================================
 # 1. よく触る入力（最上部）
 # =============================================================================
 
 st.title("💧 今日の潅水量のめやす")
+
+# --- 液肥混入機レシピへのボタン（画面の一番上）---
+#
+# ★中身はまだ作れない。リンクに載せる数字（潅水量・N量）が決まるのは
+#   第7節なので、ここでは**場所だけ**取っておき、あとから流し込む。
+#   st.empty() は「あとで書き換えられる空き地」を作る部品。
+#   日付やハウスを変えると画面全体が描き直されるので、中身も入れ直される。
+recipe_button_top = st.empty()
 
 today = dt.date.today()
 
@@ -1079,6 +1126,67 @@ with st.expander(
         "現実的で、レシピ側が週の欄を持っているのもそのため。"
     )
 
+# -----------------------------------------------------------------------------
+# 7-2. 液肥混入機レシピへそのまま渡す（段7）
+# -----------------------------------------------------------------------------
+# 【なぜリンクで渡すのか】（2026-10-01）
+# レシピアプリは記録をスプレッドシートに持ち、電波が無くても動く。
+# この画面に取り込むとその2つを失うので、数字だけ渡して役割を分ける。
+#
+# 【渡すもの】
+#   need   … 10MJあたり潅水量 [L/m²]
+#   eday   … 1日の日射予測 [MJ/m²]
+#   leach  … 塩を流すための上乗せ [%]
+#   curve  … 日射ごとの蒸散量の表。日中に日射が外れたとき、レシピ側が
+#            直線ではなく曲がりを保ったまま1日の合計を出し直せる。
+#   coef / film … レシピ側の設定とずれていないかを向こうで照合するため。
+#   nday   … その日のN量 [kg-N/10a]。ECの帯で挟んだあとの値
+#   nweek  … 1週間の目標 [kg-N/10a]（快晴が7日つづいた場合）
+#   master … どれを「主」にするか。**"n"（nday）を主にする**
+#
+# 【なぜ nday を主にするのか】
+# レシピ側は master="nweek" だと `nday = nweek ÷ 7` と割る。これは
+# 「天気に関係なく毎日同じN量」になり、暗い日に倍率が上がってしまう。
+# こちらは N需要を受光量に比例させているので、日射が落ちればN量も落ちる。
+# そのとき潅水量も落ちるので、**倍率はほぼ動かないのが正しい**
+# （必要ECの変化は 10月 +4%・5月 −1%。ただし冬は +38% で例外）。
+#
+# 【ボタンを2か所に置く理由】（2026-10-07 ユーザー指定）
+# 日中はスマホで使う。画面を下まで繰らないと出口に届かないのは不便なので、
+#   ・画面の一番上（上で場所だけ取ってある recipe_button_top）
+#   ・この「入れる数字」の囲みのすぐ下
+# の2か所に同じものを出す。どちらを押しても同じ。
+#
+# ★中央と東の両方に入る。どれも面積あたりの値なのでハウスで変わらない。
+#   house はどちらのタブを開くかを決めるだけ。
+
+recipe_link = RECIPE_APP_URL + "?" + urlencode({
+    "house": house,
+    "date": target_date.isoformat(),
+    "eday": f"{advice.sensor_radiation_mj:.2f}",
+    "need": f"{advice.water_per_10mj_l_per_m2:.3f}",
+    "leach": f"{leaching_percent:d}",
+    "coef": f"{recipe_coef:.2f}",
+    "film": f"{film_factor:.2f}",
+    "curve": ",".join(f"{value:.4f}" for value in curve),
+    "nday": f"{daily_n:.4f}",
+    "nweek": f"{fert_week.week_n_kg_per_10a:.3f}",
+    "master": "n",
+})
+
+recipe_note = (
+    f"潅水 {advice.water_per_10mj_l_per_m2:.2f} L/m²/10MJ ／ "
+    f"日射 {advice.sensor_radiation_mj:.1f} MJ/m² ／ "
+    f"上乗せ {leaching_percent}% ／ "
+    f"1日のN {daily_n:.3f} ／ 1週間のN {fert_week.week_n_kg_per_10a:.3f} kg-N/10a"
+)
+
+# 囲みのすぐ下
+st.markdown(recipe_button_html(recipe_link, recipe_note), unsafe_allow_html=True)
+# 画面の一番上（上で取っておいた場所に流し込む）
+recipe_button_top.markdown(
+    recipe_button_html(recipe_link, recipe_note), unsafe_allow_html=True)
+
 st.caption(
     "★**量はN需要で決め、ECは帯で挟むだけ**。"
     "公的な施肥基準（道南農試 0.075〜0.60 kg-N/10a・日）はすべてN量で書かれ、"
@@ -1230,79 +1338,6 @@ if target_date.month in (9, 10):
     )
 
 
-# -----------------------------------------------------------------------------
-# 7-2. 液肥混入機レシピへそのまま渡す（段7）
-# -----------------------------------------------------------------------------
-# 【なぜリンクで渡すのか】（2026-10-01）
-# レシピアプリは記録をスプレッドシートに持ち、電波が無くても動く。
-# この画面に取り込むとその2つを失うので、数字だけ渡して役割を分ける。
-#
-# 【渡すもの】
-#   need   … 10MJあたり潅水量 [L/m²]
-#   eday   … 1日の日射予測 [MJ/m²]
-#   leach  … 塩を流すための上乗せ [%]
-#   curve  … 日射ごとの蒸散量の表。日中に日射が外れたとき、レシピ側が
-#            直線ではなく曲がりを保ったまま1日の合計を出し直せる。
-#   coef / film … レシピ側の設定とずれていないかを向こうで照合するため。
-#
-# ★段7（2026-10-06）で N も渡すようにした。
-#   nday   … その日のN量 [kg-N/10a]。ECの帯で挟んだあとの値
-#   nweek  … 1週間の目標 [kg-N/10a]（快晴が7日つづいた場合）
-#   master … どちらを「主」にするか。**"n"（nday）を主にする**
-#
-# 【なぜ nday を主にするのか】
-# レシピ側は master="nweek" だと `nday = nweek ÷ 7` と割る。これは
-# 「天気に関係なく毎日同じN量」という意味になり、暗い日に倍率が上がる。
-# こちらは N需要を受光量に比例させているので、日射が落ちればN量も落ちる。
-# そのとき潅水量も落ちるので、**倍率はほぼ動かないのが正しい**
-# （必要ECの変化は 10月 +4%・5月 −1%。ただし冬は +38% で例外）。
-# だから日ごとに出した nday を主にし、nweek は向こうの
-# 「1週間のN量の着地」の表示だけに使わせる。
-#   ★レシピ側も「不足を見せるだけにして、こちらから倍率は動かさない」
-#     という作りになっているので、噛み合う。
-#
-# ★中央と東の両方に入る。どれも面積あたりの値なのでハウスで変わらない。
-#   house はどちらのタブを開くかを決めるだけ。
-
-st.markdown("---")
-
-recipe_link = RECIPE_APP_URL + "?" + urlencode({
-    "house": house,
-    "date": target_date.isoformat(),
-    "eday": f"{advice.sensor_radiation_mj:.2f}",
-    "need": f"{advice.water_per_10mj_l_per_m2:.3f}",
-    "leach": f"{leaching_percent:d}",
-    "coef": f"{recipe_coef:.2f}",
-    "film": f"{film_factor:.2f}",
-    "curve": ",".join(f"{value:.4f}" for value in curve),
-    "nday": f"{daily_n:.4f}",
-    "nweek": f"{fert_week.week_n_kg_per_10a:.3f}",
-    "master": "n",
-})
-
-st.link_button(
-    "🧪 液肥混入機レシピを開く（中央・東の両方にこの数字を入れる）",
-    recipe_link,
-    width="stretch",
-    help=(
-        "レシピアプリが開き、潅水量・日射予測・N量が入った状態になる。"
-        "日中に日射が外れたときに合計を出し直すための表も一緒に渡している。"
-        "すでに記録してある日は、勝手に上書きせず確認を出す。"
-    ),
-)
-st.caption(
-    f"渡す数字: 10MJあたり潅水量 **{advice.water_per_10mj_l_per_m2:.2f}** L/m²　／　"
-    f"日射予測 **{advice.sensor_radiation_mj:.1f}** MJ/m²　／　"
-    f"上乗せ **{leaching_percent}%**　／　"
-    f"1日のN量 **{daily_n:.3f}** kg-N/10a　／　"
-    f"1週間のN量 **{fert_week.week_n_kg_per_10a:.3f}** kg-N/10a　／　"
-    f"日射ごとの蒸散量の表 **{len(curve)}** 点"
-)
-st.caption(
-    "★**レシピ側が `nday` / `nweek` を受け取れるようにするまでは、"
-    "N量は手で入れること。**リンクには入っているが、向こうの "
-    "`paramsWoYomu()` がまだ読んでいない（README「段7」）。"
-)
 
 
 # =============================================================================
